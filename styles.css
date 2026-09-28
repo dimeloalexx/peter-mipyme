@@ -339,3 +339,6 @@ textarea { min-height: 70px; resize: vertical; }
 .welcome > p { margin: 0 0 16px; }
 .welcome .card { text-align: left; }
 .welcome > p.small { margin-top: 14px; }
+
+.tile.sold-out { opacity: .55; box-shadow: none; }
+.tile.sold-out.in-cart { opacity: 1; }

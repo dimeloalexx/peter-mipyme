@@ -559,13 +559,14 @@ function sellGridHtml() {
   return list.map((p) => {
     const inCart = ui.cart[p.id] || 0;
     const stock = p.trackStock ? stockOf(p, sold) - inCart : null;
+    const soldOut = stock !== null && stock < 1;
     return `
-      <button class="tile ${inCart ? 'in-cart' : ''}" data-action="add" data-id="${p.id}">
+      <button class="tile ${inCart ? 'in-cart' : ''} ${soldOut ? 'sold-out' : ''}" data-action="add" data-id="${p.id}">
         ${inCart ? `<span class="badge">${qty(inCart)}</span>` : ''}
         <span class="tile-name">${esc(p.name)}</span>
         <span class="tile-meta">
           ${p.price ? `<span class="tile-price">${money(p.price)}</span>` : `<span class="tile-price none">sin precio</span>`}
-          ${stock !== null ? `<span class="stock ${stock <= 0 ? 'low' : ''}">${qty(stock)}</span>` : ''}
+          ${stock !== null ? `<span class="stock ${soldOut ? 'low' : ''}">${soldOut && !inCart ? 'Agotado' : qty(stock)}</span>` : ''}
         </span>
       </button>`;
   }).join('');
@@ -621,15 +622,36 @@ function renderCartBar() {
   bar.hidden = false;
   bar.innerHTML = `
     <div class="cartbar-inner">
-      <div class="grow" data-action="openCart">${qty(n)} ${n === 1 ? 'artículo' : 'artículos'}<b>${money(cartTotal())}</b></div>
-      <button class="btn sm" style="background:transparent;color:inherit;border-color:rgba(127,127,127,.5)" data-action="openCart">Ver</button>
+      <div class="grow" data-action="openCart">${qty(n)} ${n === 1 ? 'artículo' : 'artículos'} · <u>ver</u><b>${money(cartTotal())}</b></div>
+      <button class="btn sm" style="background:transparent;color:inherit;border-color:rgba(127,127,127,.5);min-height:44px" data-action="cancelCart">Cancelar</button>
       <button class="btn primary" data-action="registerSale">Cobrar</button>
     </div>`;
 }
 
+// Products with stock control can't be sold beyond what the inventory has.
+function canAddOne(pid) {
+  const p = productById(pid);
+  if (!p.trackStock) return true;
+  const available = stockOf(p) - (ui.cart[pid] || 0);
+  if (available >= 1) return true;
+  const left = stockOf(p);
+  toast(left < 1
+    ? `No hay “${p.name}” en el inventario. Agrégalo en Inventario.`
+    : `Solo hay ${qty(left)} de “${p.name}” en el inventario.`);
+  return false;
+}
+
 function addToCart(pid) {
+  if (!canAddOne(pid)) return;
   ui.cart[pid] = (ui.cart[pid] || 0) + 1;
   refreshSellGrid();
+}
+
+function cancelCart() {
+  ui.cart = {};
+  if (!$('#sheetWrap').hidden) closeSheet();
+  refreshSellGrid();
+  toast('Venta cancelada');
 }
 
 function cartSheetHtml() {
@@ -678,6 +700,18 @@ function registerSale() {
     .filter(([, q]) => q > 0)
     .map(([pid, q]) => ({ pid, qty: q, price: productById(pid).price }));
   if (!items.length) return;
+  // Stock may have changed since the cart was filled (e.g. another phone sold the same product).
+  const short = items.filter((it) => {
+    const p = productById(it.pid);
+    return p.trackStock && it.qty > stockOf(p);
+  });
+  if (short.length) {
+    alert('No hay suficiente en el inventario:\n\n' + short.map((it) => {
+      const p = productById(it.pid);
+      return `• ${p.name}: quieres ${qty(it.qty)}, hay ${qty(Math.max(0, stockOf(p)))}`;
+    }).join('\n'));
+    return;
+  }
   const sale = { id: uid(), time: new Date().toISOString(), items };
   state.day.sales.push(sale);
   save();
@@ -1473,7 +1507,7 @@ function viewAjustes() {
       <button class="btn danger block" data-action="resetAll">Borrar los datos de “${esc(state.settings.businessName)}”</button>
       ${others.length ? `<button class="btn danger block" data-action="deleteBusiness" data-id="${index.activeId}">Eliminar este negocio</button>` : ''}
     </div>
-    <div class="muted small" style="text-align:center;margin-top:18px">Peter Mipyme · versión 1.3</div>
+    <div class="muted small" style="text-align:center;margin-top:18px">Peter Mipyme · versión 1.4</div>
   `;
 }
 
@@ -1522,12 +1556,16 @@ document.addEventListener('click', (e) => {
     case 'cat': ui.cat = el.dataset.cat; return render();
     case 'add': return addToCart(id);
     case 'openCart': return openCart();
-    case 'cartInc': ui.cart[id] = (ui.cart[id] || 0) + 1; return refreshCartSheet();
+    case 'cartInc':
+      if (!canAddOne(id)) return;
+      ui.cart[id] = (ui.cart[id] || 0) + 1;
+      return refreshCartSheet();
     case 'cartDec':
       ui.cart[id] = Math.max(0, (ui.cart[id] || 0) - 1);
       if (!ui.cart[id]) delete ui.cart[id];
       return refreshCartSheet();
     case 'clearCart': ui.cart = {}; return refreshCartSheet();
+    case 'cancelCart': return cancelCart();
     case 'registerSale': return registerSale();
     case 'deleteSale': return deleteSale(id);
 
