@@ -69,7 +69,13 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
   max-width: 720px; margin: 0 auto; padding: 10px 16px;
   display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
 }
-.brand { font-weight: 700; font-size: 18px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand {
+  display: flex; align-items: center; gap: 4px; min-width: 0;
+  border: 0; background: none; padding: 4px 0;
+  font-weight: 700; font-size: 18px; color: var(--accent);
+}
+.brand span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand svg { width: 18px; height: 18px; flex: none; stroke-width: 2.4; }
 .topbar-title { color: var(--muted); font-size: 14px; white-space: nowrap; }
 
 .view {

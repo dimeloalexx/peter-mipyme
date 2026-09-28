@@ -5,7 +5,7 @@
    All data lives on the device (localStorage). Backups are JSON files.
    ========================================================================= */
 
-const STORAGE_KEY = 'peter-mipyme-v1';
+const STORAGE_KEY = 'peter-mipyme-v1'; // single-business storage used by version 1.0
 const STATE_VERSION = 1;
 
 /* ---------- Helpers ---------- */
@@ -99,58 +99,110 @@ function newDay(inicio = {}) {
   return { openedAt: new Date().toISOString(), inicio, entradas: {}, sales: [] };
 }
 
-function defaultState() {
+// seeded = true loads the catalog from products.js (only used for the first business).
+function defaultState(seeded = true, businessName = 'Peter Mipyme') {
   return {
     version: STATE_VERSION,
-    settings: { businessName: 'Peter Mipyme', lastBackup: null, hideInstallTip: false },
-    categories: [...SEED_CATEGORIES],
-    products: SEED_PRODUCTS.map(([name, category], i) => ({
-      id: 'p' + (i + 1),
-      name,
-      category,
-      unit: 'u',
-      price: 0,
-      trackStock: true,
-      archived: false,
-    })),
+    settings: { businessName },
+    categories: seeded ? [...SEED_CATEGORIES] : [],
+    products: seeded
+      ? SEED_PRODUCTS.map(([name, category], i) => ({
+        id: 'p' + (i + 1),
+        name,
+        category,
+        unit: 'u',
+        price: 0,
+        trackStock: true,
+        archived: false,
+      }))
+      : [],
     day: newDay(),
     closes: [],
     draft: null,
   };
 }
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultState();
-    return migrate(JSON.parse(raw));
-  } catch (err) {
-    console.error(err);
-    return defaultState();
-  }
-}
-
 function migrate(s) {
-  const base = defaultState();
   return {
     version: STATE_VERSION,
-    settings: { ...base.settings, ...(s.settings || {}) },
-    categories: Array.isArray(s.categories) ? s.categories : base.categories,
-    products: Array.isArray(s.products) ? s.products : base.products,
+    settings: { businessName: 'Mi negocio', ...(s.settings || {}) },
+    categories: Array.isArray(s.categories) ? s.categories : [],
+    products: Array.isArray(s.products) ? s.products : [],
     day: s.day && s.day.inicio ? { ...newDay(), ...s.day } : newDay(),
     closes: Array.isArray(s.closes) ? s.closes : [],
     draft: s.draft || null,
   };
 }
 
-let state = loadState();
+/* ---------- Businesses ----------
+   The index lists every business; each one keeps its own state under its own key.
+   Version 1.0 stored a single business under STORAGE_KEY; it is copied over on first load
+   and the old key is left untouched as a safety net. */
 
-function save() {
+const INDEX_KEY = 'peter-mipyme-index';
+const bizKey = (id) => 'peter-mipyme-biz-' + id;
+
+function readJson(key) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    console.error(err);
+    return null;
+  }
+}
+
+function writeJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch (err) {
     console.error(err);
     toast('No se pudo guardar. Haz una copia de seguridad.');
+    return false;
+  }
+}
+
+function loadIndex() {
+  const idx = readJson(INDEX_KEY);
+  if (idx && Array.isArray(idx.list) && idx.list.length) return idx;
+
+  const legacy = readJson(STORAGE_KEY);
+  const first = legacy ? migrate(legacy) : defaultState();
+  const id = uid();
+  writeJson(bizKey(id), first);
+  const created = {
+    activeId: id,
+    list: [{ id, name: first.settings.businessName }],
+    lastBackup: legacy?.settings?.lastBackup || null,
+    hideInstallTip: !!legacy?.settings?.hideInstallTip,
+  };
+  writeJson(INDEX_KEY, created);
+  return created;
+}
+
+function loadBusiness(id) {
+  const raw = readJson(bizKey(id));
+  if (raw) return migrate(raw);
+  const entry = index.list.find((b) => b.id === id);
+  return defaultState(false, entry ? entry.name : 'Mi negocio');
+}
+
+let index = loadIndex();
+if (!index.list.some((b) => b.id === index.activeId)) index.activeId = index.list[0].id;
+let state = loadBusiness(index.activeId);
+
+function saveIndex() {
+  writeJson(INDEX_KEY, index);
+}
+
+function save() {
+  writeJson(bizKey(index.activeId), state);
+  const entry = index.list.find((b) => b.id === index.activeId);
+  const name = state.settings.businessName || 'Mi negocio';
+  if (entry && entry.name !== name) {
+    entry.name = name;
+    saveIndex();
   }
 }
 
@@ -283,13 +335,109 @@ function closeSheet() {
 
 function installTipHtml() {
   const standalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
-  if (standalone || state.settings.hideInstallTip) return '';
+  if (standalone || index.hideInstallTip) return '';
   return `
     <div class="banner">
       <div class="grow"><b>Instálala en el iPhone</b>
         En Safari toca <b style="display:inline">Compartir</b> y luego <b style="display:inline">“Agregar a inicio”</b>. Así se abre como una app y funciona sin internet.</div>
       <button class="x" data-action="hideInstallTip" aria-label="Cerrar">×</button>
     </div>`;
+}
+
+/* =========================================================================
+   NEGOCIOS
+   ========================================================================= */
+
+function businessesSheetHtml() {
+  return `
+    <h2>Mis negocios</h2>
+    <div class="card list">
+      ${index.list.map((b) => `
+        <button class="item" data-action="switchBusiness" data-id="${b.id}">
+          <div class="grow"><div class="item-name">${esc(b.name)}</div></div>
+          ${b.id === index.activeId ? `<span class="pill good">Abierto</span>` : `<span class="muted small">Abrir</span>`}
+        </button>`).join('')}
+    </div>
+    <button class="btn primary block" style="margin-top:14px" data-action="newBusiness">+ Agregar negocio</button>
+    <div class="muted small" style="margin-top:10px">Cada negocio tiene sus propios productos, inventario, ventas e historial.</div>
+  `;
+}
+
+function openBusinesses() {
+  openSheet(businessesSheetHtml());
+}
+
+function newBusinessFormHtml() {
+  return `
+    <h2>Nuevo negocio</h2>
+    <form id="businessForm" class="stack">
+      <label class="field"><span>Nombre</span><input name="name" required autocomplete="off" placeholder="Ej: Cafetería del parque"></label>
+      <label class="field"><span>Productos</span>
+        <select name="copyFrom">
+          <option value="">Empezar sin productos</option>
+          ${index.list.map((b) => `<option value="${b.id}">Copiar los productos de ${esc(b.name)}</option>`).join('')}
+        </select>
+      </label>
+      <div class="muted small">Si copias, se copian nombres, categorías y precios. El inventario empieza en 0.</div>
+      <button class="btn primary block" type="submit">Crear negocio</button>
+    </form>
+  `;
+}
+
+function submitBusinessForm(form) {
+  const data = new FormData(form);
+  const name = String(data.get('name') || '').trim();
+  if (!name) return toast('Escribe el nombre del negocio');
+
+  const fresh = defaultState(false, name);
+  const copyFrom = String(data.get('copyFrom') || '');
+  if (copyFrom) {
+    const src = copyFrom === index.activeId ? state : loadBusiness(copyFrom);
+    fresh.categories = [...src.categories];
+    fresh.products = src.products.filter((p) => !p.archived).map((p) => ({ ...p }));
+  }
+
+  const id = uid();
+  if (!writeJson(bizKey(id), fresh)) return;
+  index.list.push({ id, name });
+  saveIndex();
+  switchBusiness(id);
+  toast(`Negocio “${name}” creado`);
+}
+
+function switchBusiness(id) {
+  if (id !== index.activeId) {
+    save();
+    index.activeId = id;
+    saveIndex();
+    state = loadBusiness(id);
+    ui.cart = {};
+    ui.cat = 'Todos';
+    ui.search = '';
+    ui.invSearch = '';
+  }
+  closeSheet();
+  ui.tab = 'vender';
+  render();
+  window.scrollTo(0, 0);
+}
+
+function deleteBusiness(id) {
+  const b = index.list.find((x) => x.id === id);
+  if (index.list.length < 2) return alert('Tiene que quedar al menos un negocio.');
+  if (!confirm(`¿Eliminar el negocio “${b.name}”?\n\nSe borran sus productos, inventario e historial.`)) return;
+  if (!confirm(`¿Seguro? Esto no se puede deshacer. Haz una copia de seguridad antes si tienes dudas.`)) return;
+  localStorage.removeItem(bizKey(id));
+  index.list = index.list.filter((x) => x.id !== id);
+  if (index.activeId === id) {
+    index.activeId = index.list[0].id;
+    state = loadBusiness(index.activeId);
+    ui.cart = {};
+    ui.cat = 'Todos';
+  }
+  saveIndex();
+  render();
+  toast('Negocio eliminado');
 }
 
 /* =========================================================================
@@ -318,6 +466,10 @@ function viewVender() {
 }
 
 function sellGridHtml() {
+  if (!activeProducts().length) {
+    return `<div class="card empty" style="grid-column:1/-1">Este negocio todavía no tiene productos.<br>
+      <button class="btn primary" style="margin-top:12px" data-action="goInventory">Agregar productos</button></div>`;
+  }
   const q = normalize(ui.search.trim());
   const sold = soldMap();
   const list = activeProducts().filter((p) =>
@@ -485,6 +637,9 @@ function viewInventario() {
 
 function invListHtml() {
   const q = normalize(ui.invSearch.trim());
+  if (!activeProducts().length) {
+    return `<div class="card empty" style="margin-top:12px">Todavía no hay productos.<br><span class="small">Toca “+ Nuevo” para agregar el primero.</span></div>`;
+  }
   const list = activeProducts().filter((p) => !q || normalize(p.name).includes(q));
   if (!list.length) return `<div class="empty">No hay productos que coincidan.</div>`;
   const sold = soldMap();
@@ -916,7 +1071,7 @@ function viewHistorial() {
 function closeDetailHtml(c, justClosed) {
   const sold = c.lines.filter((l) => l.venta);
   const diff = c.cashCounted === null ? null : round2(c.cashCounted - c.cash);
-  const backupOld = daysSince(state.settings.lastBackup) >= 3;
+  const backupOld = daysSince(index.lastBackup) >= 3;
   return `
     ${justClosed ? `<div class="banner" style="background:var(--good-soft)"><div class="grow"><b>Día cerrado</b>Mañana empieza con lo que contaste hoy.</div></div>` : ''}
     <h2>${fmtDate(c.date)}</h2>
@@ -1110,13 +1265,25 @@ async function exportAllExcel() {
   await saveFile(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `Historial ${localDate()}.xlsx`);
 }
 
+// A backup holds every business, so one file restores the whole phone.
 async function backup() {
-  const payload = { app: 'peter-mipyme', exportedAt: new Date().toISOString(), state };
+  save();
+  const payload = {
+    app: 'peter-mipyme',
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    activeId: index.activeId,
+    businesses: index.list.map((b) => ({
+      id: b.id,
+      name: b.name,
+      state: b.id === index.activeId ? state : loadBusiness(b.id),
+    })),
+  };
   const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
   const ok = await saveFile(blob, `Copia Peter Mipyme ${localDate()}.json`);
   if (ok) {
-    state.settings.lastBackup = new Date().toISOString();
-    save();
+    index.lastBackup = new Date().toISOString();
+    saveIndex();
     toast('Copia de seguridad lista');
     if (ui.tab === 'ajustes') render();
   }
@@ -1125,19 +1292,37 @@ async function backup() {
 function restoreBackup(file) {
   const reader = new FileReader();
   reader.onload = () => {
+    let data;
     try {
-      const data = JSON.parse(reader.result);
-      if (data.app !== 'peter-mipyme' || !data.state || !Array.isArray(data.state.products)) throw new Error('format');
-      const when = data.exportedAt ? new Date(data.exportedAt).toLocaleString('es') : 'fecha desconocida';
-      if (!confirm(`¿Restaurar la copia del ${when}?\n\nSe reemplazan TODOS los datos actuales de este teléfono.`)) return;
+      data = JSON.parse(reader.result);
+    } catch {
+      data = null;
+    }
+    const isMulti = data && data.app === 'peter-mipyme' && Array.isArray(data.businesses) && data.businesses.length;
+    const isSingle = data && data.app === 'peter-mipyme' && data.state && Array.isArray(data.state.products);
+    if (!isMulti && !isSingle) return alert('Ese archivo no es una copia de seguridad válida de la app.');
+
+    const when = data.exportedAt ? new Date(data.exportedAt).toLocaleString('es') : 'fecha desconocida';
+    if (isMulti) {
+      const names = data.businesses.map((b) => '• ' + b.name).join('\n');
+      if (!confirm(`¿Restaurar la copia del ${when}?\n\n${names}\n\nSe reemplazan TODOS los negocios de este teléfono.`)) return;
+      for (const b of index.list) localStorage.removeItem(bizKey(b.id));
+      index.list = data.businesses.map((b) => {
+        writeJson(bizKey(b.id), migrate(b.state));
+        return { id: b.id, name: b.name };
+      });
+      index.activeId = index.list.some((b) => b.id === data.activeId) ? data.activeId : index.list[0].id;
+      saveIndex();
+      state = loadBusiness(index.activeId);
+    } else {
+      if (!confirm(`¿Restaurar la copia del ${when}?\n\nSe reemplazan los datos del negocio “${state.settings.businessName}”.`)) return;
       state = migrate(data.state);
       save();
-      ui.cart = {};
-      render();
-      toast('Datos restaurados');
-    } catch {
-      alert('Ese archivo no es una copia de seguridad válida de la app.');
     }
+    ui.cart = {};
+    ui.cat = 'Todos';
+    render();
+    toast('Datos restaurados');
   };
   reader.readAsText(file);
 }
@@ -1147,18 +1332,31 @@ function restoreBackup(file) {
    ========================================================================= */
 
 function viewAjustes() {
-  const last = state.settings.lastBackup;
+  const last = index.lastBackup;
   const lastText = last ? `Última copia: ${new Date(last).toLocaleDateString('es')} (hace ${daysSince(last)} días)` : 'Nunca se ha hecho una copia.';
+  const others = index.list.filter((b) => b.id !== index.activeId);
   return `
     ${installTipHtml()}
     <div class="card stack">
-      <label class="field"><span>Nombre del negocio</span><input id="bizName" value="${esc(state.settings.businessName)}" autocomplete="off"></label>
+      <label class="field"><span>Nombre de este negocio</span><input id="bizName" value="${esc(state.settings.businessName)}" autocomplete="off"></label>
       <div class="muted small">Aparece arriba en la app y en los reportes.</div>
     </div>
 
+    <h3 class="section-title">Negocios</h3>
+    <div class="card list">
+      ${index.list.map((b) => `
+        <div class="item">
+          <div class="grow"><div class="item-name">${esc(b.name)}</div>
+            <div class="item-sub">${b.id === index.activeId ? 'Abierto ahora' : 'Toca “Abrir” para cambiar a este'}</div></div>
+          ${b.id === index.activeId ? '' : `<button class="btn sm" data-action="switchBusiness" data-id="${b.id}">Abrir</button>`}
+        </div>`).join('')}
+    </div>
+    <button class="btn block" style="margin-top:10px" data-action="newBusiness">+ Agregar otro negocio</button>
+    <div class="muted small" style="margin-top:8px">También puedes cambiar de negocio tocando el nombre arriba.</div>
+
     <h3 class="section-title">Copia de seguridad</h3>
     <div class="card stack">
-      <div class="small">Los datos se guardan solo en este teléfono. Si se pierde o se borra Safari, se pierden. Haz una copia cada pocos días y guárdala en Archivos o mándala por WhatsApp.</div>
+      <div class="small">Los datos se guardan solo en este teléfono. Si se pierde o se borra Safari, se pierden. Haz una copia cada pocos días y guárdala en Archivos o mándala por WhatsApp. La copia incluye todos los negocios.</div>
       <div class="small ${!last || daysSince(last) >= 7 ? '' : 'muted'}" style="${!last || daysSince(last) >= 7 ? 'color:var(--bad);font-weight:600' : ''}">${lastText}</div>
       <div class="btn-row">
         <button class="btn primary" data-action="backup">Hacer copia</button>
@@ -1176,17 +1374,22 @@ function viewAjustes() {
     </div>
 
     <h3 class="section-title">Zona peligrosa</h3>
-    <div class="card">
-      <button class="btn danger block" data-action="resetAll">Borrar todos los datos</button>
+    <div class="card stack">
+      <button class="btn danger block" data-action="resetAll">Borrar los datos de “${esc(state.settings.businessName)}”</button>
+      ${others.length ? `<button class="btn danger block" data-action="deleteBusiness" data-id="${index.activeId}">Eliminar este negocio</button>` : ''}
     </div>
-    <div class="muted small" style="text-align:center;margin-top:18px">Peter Mipyme · versión 1.0</div>
+    <div class="muted small" style="text-align:center;margin-top:18px">Peter Mipyme · versión 1.1</div>
   `;
 }
 
+// Clears inventory, sales and history of the open business; keeps its name and product list.
 function resetAll() {
-  if (!confirm('¿Borrar TODOS los datos? Se pierden precios, inventario e historial.')) return;
+  const name = state.settings.businessName;
+  if (!confirm(`¿Borrar inventario, ventas e historial de “${name}”?\n\nSe conservan los productos y precios.`)) return;
   if (!confirm('¿Seguro? Esto no se puede deshacer. Haz una copia antes si tienes dudas.')) return;
-  state = defaultState();
+  state.day = newDay();
+  state.closes = [];
+  state.draft = null;
   save();
   ui.cart = {};
   render();
@@ -1206,7 +1409,13 @@ document.addEventListener('click', (e) => {
   const id = el.dataset.id;
   switch (el.dataset.action) {
     case 'closeSheet': return closeSheet();
-    case 'hideInstallTip': state.settings.hideInstallTip = true; save(); return render();
+    case 'hideInstallTip': index.hideInstallTip = true; saveIndex(); return render();
+
+    case 'openBusinesses': return openBusinesses();
+    case 'switchBusiness': return switchBusiness(id);
+    case 'newBusiness': return openSheet(newBusinessFormHtml());
+    case 'deleteBusiness': return deleteBusiness(id);
+    case 'goInventory': return switchTab('inventario');
 
     case 'cat': ui.cat = el.dataset.cat; return render();
     case 'add': return addToCart(id);
@@ -1304,6 +1513,10 @@ document.addEventListener('submit', (e) => {
     e.preventDefault();
     submitProductForm(e.target);
   }
+  if (e.target.id === 'businessForm') {
+    e.preventDefault();
+    submitBusinessForm(e.target);
+  }
 });
 
 // Select the whole number when tapping a numeric field, so it can be overwritten directly.
@@ -1314,15 +1527,22 @@ document.addEventListener('focusin', (e) => {
 
 /* ---------- Service worker & start ---------- */
 
-if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+// When a new version is published, it downloads in the background and the app reloads
+// into it. Everything typed is already saved, so the only thing that could be lost is an
+// unpaid cart; in that case the reload waits until the app is reopened.
+if (navigator.serviceWorker && location.protocol !== 'file:') {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) return;
+    if (cartCount() === 0 && $('#sheetWrap').hidden) location.reload();
+    else toast('Versión nueva lista. Se verá al volver a abrir la app.');
+  });
   navigator.serviceWorker.register('sw.js').then((reg) => {
+    if (!reg) return;
     reg.addEventListener('updatefound', () => {
       const nw = reg.installing;
       nw.addEventListener('statechange', () => {
-        if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-          toast('Hay una versión nueva. Se aplicará al volver a abrir la app.');
-          nw.postMessage('skipWaiting');
-        }
+        if (nw.state === 'installed' && navigator.serviceWorker.controller) nw.postMessage('skipWaiting');
       });
     });
   }).catch(console.error);

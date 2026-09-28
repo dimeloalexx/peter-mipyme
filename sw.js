@@ -1,5 +1,5 @@
 // Offline cache. Bump CACHE_VERSION on every release so phones pick up the new files.
-const CACHE_VERSION = 'pm-v1';
+const CACHE_VERSION = 'pm-v2';
 const APP_FILES = [
   './',
   './index.html',
@@ -14,7 +14,12 @@ const APP_FILES = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_VERSION).then((cache) => cache.addAll(APP_FILES)));
+  // cache: 'reload' skips the browser's HTTP cache (GitHub Pages sets max-age=600),
+  // otherwise a fresh release could get stored with the previous release's files.
+  event.waitUntil(
+    caches.open(CACHE_VERSION)
+      .then((cache) => cache.addAll(APP_FILES.map((url) => new Request(url, { cache: 'reload' }))))
+  );
 });
 
 self.addEventListener('activate', (event) => {
