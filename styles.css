@@ -133,7 +133,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .btn-row > .btn { flex: 1; }
 .link { background: none; border: 0; color: var(--accent); font-weight: 600; padding: 6px 0; }
 
-input[type="text"], input[type="search"], input[type="date"], input:not([type]), select, textarea, .input {
+input[type="text"], input[type="search"], input[type="date"], input[type="email"], input[type="password"], input:not([type]), select, textarea, .input {
   width: 100%; min-height: 46px; padding: 10px 12px;
   border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
   font-size: 16px; outline: none;
@@ -331,3 +331,11 @@ textarea { min-height: 70px; resize: vertical; }
 .sync-badge.bad { color: var(--bad); background: var(--bad-soft); }
 @keyframes pulse { 50% { opacity: .25; } }
 .topbar-inner { align-items: center; }
+
+/* ---------- Welcome ---------- */
+.welcome { max-width: 420px; margin: 0 auto; padding-top: calc(12px + var(--safe-t)); text-align: center; }
+.welcome-logo { width: 84px; height: 84px; border-radius: 20px; box-shadow: var(--shadow); margin: 10px auto 6px; display: block; }
+.welcome h1 { font-size: 26px; margin: 8px 0 4px; }
+.welcome > p { margin: 0 0 16px; }
+.welcome .card { text-align: left; }
+.welcome > p.small { margin-top: 14px; }

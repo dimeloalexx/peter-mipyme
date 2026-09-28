@@ -334,6 +334,17 @@ const TAB_TITLES = {
 /* ---------- Render root ---------- */
 
 function render() {
+  // Without an account only the welcome screen is shown.
+  const gated = !Cloud.loggedIn;
+  $('.topbar').hidden = gated;
+  $('#tabbar').hidden = gated;
+  if (gated) {
+    document.title = 'Peter Mipyme';
+    $('#view').innerHTML = viewWelcome();
+    $('#cartbar').hidden = true;
+    return;
+  }
+
   $('#brandName').textContent = state.settings.businessName || 'Mi negocio';
   document.title = state.settings.businessName || 'Mi negocio';
   $('#viewTitle').textContent = TAB_TITLES[ui.tab];
@@ -364,14 +375,19 @@ function toast(msg) {
 }
 
 let sheetOnClose = null;
-function openSheet(html, onClose = null) {
-  $('#sheet').innerHTML = `<div class="sheet-handle"></div>${html}`;
+let sheetLocked = false;
+
+// locked = true: the sheet can't be dismissed by tapping outside (a choice is required).
+function openSheet(html, onClose = null, locked = false) {
+  $('#sheet').innerHTML = `${locked ? '' : '<div class="sheet-handle"></div>'}${html}`;
   $('#sheetWrap').hidden = false;
   document.body.style.overflow = 'hidden';
   sheetOnClose = onClose;
+  sheetLocked = locked;
 }
 
 function closeSheet() {
+  sheetLocked = false;
   $('#sheetWrap').hidden = true;
   $('#sheet').innerHTML = '';
   document.body.style.overflow = '';
@@ -380,14 +396,29 @@ function closeSheet() {
   if (cb) cb();
 }
 
-function installTipHtml() {
-  const standalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
-  if (standalone || index.hideInstallTip) return '';
+function viewWelcome() {
   return `
-    <div class="banner">
-      <div class="grow"><b>Instálala en el iPhone</b>
-        En Safari toca <b style="display:inline">Compartir</b> y luego <b style="display:inline">“Agregar a inicio”</b>. Así se abre como una app y funciona sin internet.</div>
-      <button class="x" data-action="hideInstallTip" aria-label="Cerrar">×</button>
+    <div class="welcome">
+      ${installTipHtml(true)}
+      <img class="welcome-logo" src="icons/icon-192.png" alt="">
+      <h1>Bienvenido</h1>
+      <p class="muted">Ventas, inventario y cierre del día para tu negocio.</p>
+      <div class="card" id="loginBox">${Cloud.loginFormHtml()}</div>
+      <p class="small muted">Solo necesitas internet esta primera vez. Después la app funciona sin conexión y guarda todo en la nube cuando hay internet.</p>
+    </div>`;
+}
+
+function installTipHtml(welcome = false) {
+  const standalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+  if (standalone || (!welcome && index.hideInstallTip)) return '';
+  // On iPhone the home-screen app doesn't share data with Safari, so install before logging in.
+  const text = welcome
+    ? 'Antes de crear la cuenta, agrégala a la pantalla de inicio: en Safari toca <b style="display:inline">Compartir</b> y luego <b style="display:inline">“Agregar a inicio”</b>. Después ábrela desde el ícono y entra ahí.'
+    : 'En Safari toca <b style="display:inline">Compartir</b> y luego <b style="display:inline">“Agregar a inicio”</b>. Así se abre como una app y funciona sin internet.';
+  return `
+    <div class="banner" style="text-align:left">
+      <div class="grow"><b>Instálala en el iPhone</b>${text}</div>
+      ${welcome ? '' : '<button class="x" data-action="hideInstallTip" aria-label="Cerrar">×</button>'}
     </div>`;
 }
 
@@ -1442,7 +1473,7 @@ function viewAjustes() {
       <button class="btn danger block" data-action="resetAll">Borrar los datos de “${esc(state.settings.businessName)}”</button>
       ${others.length ? `<button class="btn danger block" data-action="deleteBusiness" data-id="${index.activeId}">Eliminar este negocio</button>` : ''}
     </div>
-    <div class="muted small" style="text-align:center;margin-top:18px">Peter Mipyme · versión 1.2</div>
+    <div class="muted small" style="text-align:center;margin-top:18px">Peter Mipyme · versión 1.3</div>
   `;
 }
 
@@ -1473,7 +1504,7 @@ document.addEventListener('click', (e) => {
   if (!el) return;
   const id = el.dataset.id;
   switch (el.dataset.action) {
-    case 'closeSheet': return closeSheet();
+    case 'closeSheet': return sheetLocked ? undefined : closeSheet();
     case 'hideInstallTip': index.hideInstallTip = true; saveIndex(); return render();
 
     case 'openBusinesses': return openBusinesses();

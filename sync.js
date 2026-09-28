@@ -692,9 +692,12 @@ const Cloud = {
   },
 
   loginSheetHtml(error = '') {
-    const email = this.session ? this.session.user.email : '';
+    return `<h2>Cuenta en la nube</h2><div id="loginBox">${this.loginFormHtml(error)}</div>`;
+  },
+
+  loginFormHtml(error = '', typedEmail = '') {
+    const email = typedEmail || (this.session ? this.session.user.email : '');
     return `
-      <h2>Cuenta en la nube</h2>
       <form id="loginForm" class="stack">
         <label class="field"><span>Correo</span><input name="email" type="email" inputmode="email" autocomplete="username" value="${esc(email)}" required></label>
         <label class="field"><span>Contraseña (mínimo 6 caracteres)</span><input name="password" type="password" autocomplete="current-password" minlength="6" required></label>
@@ -739,14 +742,18 @@ async function submitLoginForm(form, submitter) {
   try {
     const result = await Cloud.login(email, password, create);
     if (result.ask) {
-      $('#sheet').innerHTML = `<div class="sheet-handle"></div>${Cloud.askSheetHtml(result.ask)}`;
+      openSheet(Cloud.askSheetHtml(result.ask), null, true);
       return;
     }
     closeSheet();
+    render();
     toast(result.done === 'downloaded' ? 'Listo. Datos descargados de la nube.' : 'Listo. Los datos se guardan en la nube.');
   } catch (err) {
     console.error(err);
-    $('#sheet').innerHTML = `<div class="sheet-handle"></div>${Cloud.loginSheetHtml(loginErrorText(err))}`;
+    // If the account was created but the next request failed, undo the half-finished
+    // login so the welcome screen stays and the person can simply try again.
+    if (Cloud.loggedIn && !Cloud.listening) Cloud.logout();
+    $('#loginBox').innerHTML = Cloud.loginFormHtml(loginErrorText(err), email);
   }
 }
 
@@ -775,7 +782,7 @@ async function cloudChoice(choice) {
 
 function cloudLogout() {
   if (Cloud.hasPending() && !confirm('Hay cambios que todavía no se han subido a la nube. Si cierras sesión ahora no se subirán. ¿Cerrar sesión igual?')) return;
-  if (!confirm('¿Cerrar sesión?\n\nLos datos se quedan en este teléfono, pero dejan de guardarse en la nube.')) return;
+  if (!confirm('¿Cerrar sesión?\n\nPara volver a usar la app en este teléfono tendrás que entrar otra vez con tu correo y contraseña.')) return;
   Cloud.logout();
   render();
   toast('Sesión cerrada');
