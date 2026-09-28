@@ -43,6 +43,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -316,3 +317,17 @@ textarea { min-height: 70px; resize: vertical; }
   box-shadow: 0 8px 24px rgba(0, 0, 0, .25); max-width: calc(100% - 32px); text-align: center;
   animation: up .2s ease-out;
 }
+
+/* ---------- Sync badge ---------- */
+.sync-badge {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  border: 0; background: var(--surface-2); color: var(--muted);
+  font-size: 12px; font-weight: 700; padding: 5px 10px; border-radius: 999px; white-space: nowrap;
+}
+.sync-badge i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.sync-badge.ok { color: var(--good); background: var(--good-soft); }
+.sync-badge.wait, .sync-badge.sync { color: var(--accent); background: var(--accent-soft); }
+.sync-badge.sync i { animation: pulse 1s ease-in-out infinite; }
+.sync-badge.bad { color: var(--bad); background: var(--bad-soft); }
+@keyframes pulse { 50% { opacity: .25; } }
+.topbar-inner { align-items: center; }

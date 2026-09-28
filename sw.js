@@ -1,10 +1,11 @@
 // Offline cache. Bump CACHE_VERSION on every release so phones pick up the new files.
-const CACHE_VERSION = 'pm-v2';
+const CACHE_VERSION = 'pm-v3';
 const APP_FILES = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './sync.js',
   './products.js',
   './manifest.webmanifest',
   './vendor/xlsx.full.min.js',
@@ -36,6 +37,8 @@ self.addEventListener('message', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+  // Cloud requests always go to the network.
+  if (new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(
     caches.match(event.request, { ignoreSearch: true }).then((cached) => cached || fetch(event.request))
   );

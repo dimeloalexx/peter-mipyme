@@ -6,7 +6,7 @@
    ========================================================================= */
 
 const STORAGE_KEY = 'peter-mipyme-v1'; // single-business storage used by version 1.0
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 
 /* ---------- Helpers ---------- */
 
@@ -95,15 +95,21 @@ function daysSince(iso) {
 
 /* ---------- State ---------- */
 
+// Everything that can change on two phones at once is stored as records with ids
+// (sales, stock entries, closings) or stamped with updatedAt (products, settings,
+// opening counts), so the cloud sync can merge both phones without losing anything.
 function newDay(inicio = {}) {
-  return { openedAt: new Date().toISOString(), inicio, entradas: {}, sales: [] };
+  const now = new Date().toISOString();
+  const inicioAt = {};
+  for (const pid of Object.keys(inicio)) inicioAt[pid] = Date.now();
+  return { id: uid(), openedAt: now, inicio, inicioAt, entries: [], sales: [], removedSales: [] };
 }
 
 // seeded = true loads the catalog from products.js (only used for the first business).
 function defaultState(seeded = true, businessName = 'Peter Mipyme') {
   return {
     version: STATE_VERSION,
-    settings: { businessName },
+    settings: { businessName, updatedAt: 0 },
     categories: seeded ? [...SEED_CATEGORIES] : [],
     products: seeded
       ? SEED_PRODUCTS.map(([name, category], i) => ({
@@ -114,22 +120,47 @@ function defaultState(seeded = true, businessName = 'Peter Mipyme') {
         price: 0,
         trackStock: true,
         archived: false,
+        updatedAt: 0,
       }))
       : [],
     day: newDay(),
     closes: [],
+    removedCloses: [],
     draft: null,
+  };
+}
+
+// Brings any saved state (1.0, 1.1 or current) to the current shape. It must be
+// deterministic: the same input always gives the same ids.
+function migrateDay(d) {
+  if (!d || !d.inicio) return newDay();
+  const id = d.id || 'd-' + d.openedAt;
+  let entries = Array.isArray(d.entries) ? d.entries : [];
+  if (d.entradas && !d.entries) {
+    entries = Object.entries(d.entradas)
+      .filter(([, n]) => n)
+      .map(([pid, n]) => ({ id: `e-${id}-${pid}`, pid, qty: n, time: d.openedAt }));
+  }
+  return {
+    id,
+    openedAt: d.openedAt || new Date().toISOString(),
+    inicio: d.inicio || {},
+    inicioAt: d.inicioAt || {},
+    entries,
+    sales: Array.isArray(d.sales) ? d.sales : [],
+    removedSales: Array.isArray(d.removedSales) ? d.removedSales : [],
   };
 }
 
 function migrate(s) {
   return {
     version: STATE_VERSION,
-    settings: { businessName: 'Mi negocio', ...(s.settings || {}) },
+    settings: { businessName: 'Mi negocio', updatedAt: 0, ...(s.settings || {}) },
     categories: Array.isArray(s.categories) ? s.categories : [],
-    products: Array.isArray(s.products) ? s.products : [],
-    day: s.day && s.day.inicio ? { ...newDay(), ...s.day } : newDay(),
+    products: Array.isArray(s.products) ? s.products.map((p) => ({ updatedAt: 0, ...p })) : [],
+    day: migrateDay(s.day),
     closes: Array.isArray(s.closes) ? s.closes : [],
+    removedCloses: Array.isArray(s.removedCloses) ? s.removedCloses : [],
     draft: s.draft || null,
   };
 }
@@ -196,7 +227,8 @@ function saveIndex() {
   writeJson(INDEX_KEY, index);
 }
 
-function save() {
+// syncable = false for things that only matter on this phone (the half-typed closing).
+function save(syncable = true) {
   writeJson(bizKey(index.activeId), state);
   const entry = index.list.find((b) => b.id === index.activeId);
   const name = state.settings.businessName || 'Mi negocio';
@@ -204,6 +236,7 @@ function save() {
     entry.name = name;
     saveIndex();
   }
+  if (syncable) Cloud.markDirty(index.activeId);
 }
 
 /* ---------- Derived data ---------- */
@@ -224,9 +257,19 @@ function soldMap() {
   return m;
 }
 
-function stockOf(p, sold = soldMap()) {
+function entradasMap(day = state.day) {
+  const m = {};
+  for (const e of day.entries) m[e.pid] = (m[e.pid] || 0) + e.qty;
+  return m;
+}
+
+function stockOf(p, sold = soldMap(), entradas = entradasMap()) {
   const d = state.day;
-  return (d.inicio[p.id] || 0) + (d.entradas[p.id] || 0) - (sold[p.id] || 0);
+  return (d.inicio[p.id] || 0) + (entradas[p.id] || 0) - (sold[p.id] || 0);
+}
+
+function addStockEntry(pid, n) {
+  state.day.entries.push({ id: uid(), pid, qty: n, time: new Date().toISOString() });
 }
 
 // Sets the on-hand quantity. Before any movement today it rewrites the opening
@@ -234,11 +277,13 @@ function stockOf(p, sold = soldMap()) {
 function setStock(p, value) {
   const d = state.day;
   const sold = soldMap();
-  if (!sold[p.id] && !d.entradas[p.id]) {
+  const entradas = entradasMap();
+  if (!sold[p.id] && !entradas[p.id]) {
     d.inicio[p.id] = value;
+    d.inicioAt[p.id] = Date.now();
   } else {
-    const diff = value - stockOf(p, sold);
-    if (diff) d.entradas[p.id] = (d.entradas[p.id] || 0) + diff;
+    const diff = value - stockOf(p, sold, entradas);
+    if (diff) addStockEntry(p.id, diff);
   }
 }
 
@@ -292,6 +337,8 @@ function render() {
   $('#brandName').textContent = state.settings.businessName || 'Mi negocio';
   document.title = state.settings.businessName || 'Mi negocio';
   $('#viewTitle').textContent = TAB_TITLES[ui.tab];
+  $('#viewTitle').hidden = Cloud.loggedIn;
+  Cloud.renderBadge();
   for (const b of $$('#tabbar button')) b.classList.toggle('on', b.dataset.tab === ui.tab);
 
   const views = { vender: viewVender, inventario: viewInventario, cierre: viewCierre, historial: viewHistorial, ajustes: viewAjustes };
@@ -401,6 +448,7 @@ function submitBusinessForm(form) {
   if (!writeJson(bizKey(id), fresh)) return;
   index.list.push({ id, name });
   saveIndex();
+  Cloud.markDirty(id);
   switchBusiness(id);
   toast(`Negocio “${name}” creado`);
 }
@@ -429,6 +477,7 @@ function deleteBusiness(id) {
   if (!confirm(`¿Seguro? Esto no se puede deshacer. Haz una copia de seguridad antes si tienes dudas.`)) return;
   localStorage.removeItem(bizKey(id));
   index.list = index.list.filter((x) => x.id !== id);
+  Cloud.businessDeleted(id);
   if (index.activeId === id) {
     index.activeId = index.list[0].id;
     state = loadBusiness(index.activeId);
@@ -612,6 +661,7 @@ function deleteSale(id) {
   if (!sale) return;
   if (!confirm(`¿Anular esta venta de ${money(saleTotal(sale))}?\n\n${saleSummary(sale).replace(/&[^;]+;/g, '')}`)) return;
   state.day.sales = state.day.sales.filter((s) => s.id !== id);
+  state.day.removedSales.push(id);
   save();
   render();
   toast('Venta anulada');
@@ -747,9 +797,9 @@ function submitProductForm(form) {
   let p;
   if (form.dataset.id) {
     p = productById(form.dataset.id);
-    Object.assign(p, fields);
+    Object.assign(p, fields, { updatedAt: Date.now() });
   } else {
-    p = { id: uid(), archived: false, ...fields };
+    p = { id: uid(), archived: false, ...fields, updatedAt: Date.now() };
     state.products.push(p);
   }
   if (p.trackStock && data.has('stock')) {
@@ -765,7 +815,7 @@ function addEntry(id) {
   const p = productById(id);
   const n = parseNum($('#entryQty').value);
   if (!n) return toast('Escribe la cantidad que entró');
-  state.day.entradas[id] = (state.day.entradas[id] || 0) + n;
+  addStockEntry(id, n);
   save();
   $('#sheet').innerHTML = `<div class="sheet-handle"></div>${productFormHtml(p)}`;
   toast(`+${qty(n)} ${p.name}`);
@@ -775,6 +825,7 @@ function deleteProduct(id) {
   const p = productById(id);
   if (!confirm(`¿Eliminar “${p.name}”?\n\nLas ventas que ya tiene en el historial se conservan.`)) return;
   p.archived = true;
+  p.updatedAt = Date.now();
   delete ui.cart[id];
   save();
   closeSheet();
@@ -786,6 +837,7 @@ function saveQuickField(input) {
   const value = parseNum(input.value);
   if (input.dataset.quick === 'price') {
     p.price = round2(value);
+    p.updatedAt = Date.now();
   } else {
     setStock(p, value);
   }
@@ -803,13 +855,14 @@ function draft() {
 
 function closingLines() {
   const sold = soldMap();
+  const ent = entradasMap();
   const d = state.draft || { finals: {}, ventas: {} };
   const day = state.day;
   return state.products
-    .filter((p) => !p.archived || sold[p.id] || day.entradas[p.id] || day.inicio[p.id])
+    .filter((p) => !p.archived || sold[p.id] || ent[p.id] || day.inicio[p.id])
     .map((p) => {
       const inicio = day.inicio[p.id] || 0;
-      const entradas = day.entradas[p.id] || 0;
+      const entradas = ent[p.id] || 0;
       const reg = sold[p.id] || 0;
       let final = 0;
       let venta;
@@ -956,6 +1009,9 @@ function doClose() {
   const close = {
     id: uid(),
     date,
+    dayId: state.day.id,
+    saleIds: state.day.sales.map((s) => s.id),
+    entryIds: state.day.entries.map((e) => e.id),
     openedAt: state.day.openedAt,
     closedAt: new Date().toISOString(),
     salesCount: state.day.sales.length,
@@ -1071,7 +1127,7 @@ function viewHistorial() {
 function closeDetailHtml(c, justClosed) {
   const sold = c.lines.filter((l) => l.venta);
   const diff = c.cashCounted === null ? null : round2(c.cashCounted - c.cash);
-  const backupOld = daysSince(index.lastBackup) >= 3;
+  const backupOld = !Cloud.loggedIn && daysSince(index.lastBackup) >= 3;
   return `
     ${justClosed ? `<div class="banner" style="background:var(--good-soft)"><div class="grow"><b>Día cerrado</b>Mañana empieza con lo que contaste hoy.</div></div>` : ''}
     <h2>${fmtDate(c.date)}</h2>
@@ -1108,6 +1164,7 @@ function deleteClose(id) {
   const c = state.closes.find((x) => x.id === id);
   if (!confirm(`¿Eliminar el cierre del ${fmtDateNumeric(c.date)}?\n\nNo cambia el inventario actual. Esto no se puede deshacer.`)) return;
   state.closes = state.closes.filter((x) => x.id !== id);
+  state.removedCloses.push(id);
   save();
   closeSheet();
   render();
@@ -1314,10 +1371,12 @@ function restoreBackup(file) {
       index.activeId = index.list.some((b) => b.id === data.activeId) ? data.activeId : index.list[0].id;
       saveIndex();
       state = loadBusiness(index.activeId);
+      Cloud.restored(index.list.map((b) => b.id));
     } else {
       if (!confirm(`¿Restaurar la copia del ${when}?\n\nSe reemplazan los datos del negocio “${state.settings.businessName}”.`)) return;
       state = migrate(data.state);
       save();
+      Cloud.restored([index.activeId]);
     }
     ui.cart = {};
     ui.cat = 'Todos';
@@ -1335,6 +1394,7 @@ function viewAjustes() {
   const last = index.lastBackup;
   const lastText = last ? `Última copia: ${new Date(last).toLocaleDateString('es')} (hace ${daysSince(last)} días)` : 'Nunca se ha hecho una copia.';
   const others = index.list.filter((b) => b.id !== index.activeId);
+  const backupWarn = !Cloud.loggedIn && (!last || daysSince(last) >= 7);
   return `
     ${installTipHtml()}
     <div class="card stack">
@@ -1354,10 +1414,14 @@ function viewAjustes() {
     <button class="btn block" style="margin-top:10px" data-action="newBusiness">+ Agregar otro negocio</button>
     <div class="muted small" style="margin-top:8px">También puedes cambiar de negocio tocando el nombre arriba.</div>
 
+    ${Cloud.settingsHtml()}
+
     <h3 class="section-title">Copia de seguridad</h3>
     <div class="card stack">
-      <div class="small">Los datos se guardan solo en este teléfono. Si se pierde o se borra Safari, se pierden. Haz una copia cada pocos días y guárdala en Archivos o mándala por WhatsApp. La copia incluye todos los negocios.</div>
-      <div class="small ${!last || daysSince(last) >= 7 ? '' : 'muted'}" style="${!last || daysSince(last) >= 7 ? 'color:var(--bad);font-weight:600' : ''}">${lastText}</div>
+      <div class="small">${Cloud.loggedIn
+        ? 'Los datos ya se guardan en la nube. Una copia en un archivo es una protección extra, por si algún día la necesitas. Incluye todos los negocios.'
+        : 'Los datos se guardan solo en este teléfono. Si se pierde o se borra Safari, se pierden. Haz una copia cada pocos días y guárdala en Archivos o mándala por WhatsApp. La copia incluye todos los negocios.'}</div>
+      <div class="small ${backupWarn ? '' : 'muted'}" style="${backupWarn ? 'color:var(--bad);font-weight:600' : ''}">${lastText}</div>
       <div class="btn-row">
         <button class="btn primary" data-action="backup">Hacer copia</button>
         <button class="btn" data-action="restore">Restaurar copia</button>
@@ -1378,7 +1442,7 @@ function viewAjustes() {
       <button class="btn danger block" data-action="resetAll">Borrar los datos de “${esc(state.settings.businessName)}”</button>
       ${others.length ? `<button class="btn danger block" data-action="deleteBusiness" data-id="${index.activeId}">Eliminar este negocio</button>` : ''}
     </div>
-    <div class="muted small" style="text-align:center;margin-top:18px">Peter Mipyme · versión 1.1</div>
+    <div class="muted small" style="text-align:center;margin-top:18px">Peter Mipyme · versión 1.2</div>
   `;
 }
 
@@ -1388,6 +1452,7 @@ function resetAll() {
   if (!confirm(`¿Borrar inventario, ventas e historial de “${name}”?\n\nSe conservan los productos y precios.`)) return;
   if (!confirm('¿Seguro? Esto no se puede deshacer. Haz una copia antes si tienes dudas.')) return;
   state.day = newDay();
+  state.removedCloses.push(...state.closes.map((c) => c.id));
   state.closes = [];
   state.draft = null;
   save();
@@ -1417,6 +1482,12 @@ document.addEventListener('click', (e) => {
     case 'deleteBusiness': return deleteBusiness(id);
     case 'goInventory': return switchTab('inventario');
 
+    case 'cloudLogin': return openSheet(Cloud.loginSheetHtml());
+    case 'cloudLogout': return cloudLogout();
+    case 'cloudSyncNow': return Cloud.syncNow();
+    case 'cloudChoice': return cloudChoice(el.dataset.choice);
+    case 'openSettings': return switchTab('ajustes');
+
     case 'cat': ui.cat = el.dataset.cat; return render();
     case 'add': return addToCart(id);
     case 'openCart': return openCart();
@@ -1437,7 +1508,7 @@ document.addEventListener('click', (e) => {
 
     case 'doClose': return doClose();
     case 'resetDraft':
-      if (confirm('¿Borrar lo que escribiste en el cierre?')) { state.draft = null; save(); render(); }
+      if (confirm('¿Borrar lo que escribiste en el cierre?')) { state.draft = null; save(false); render(); }
       return;
 
     case 'openClose': return openCloseDetail(id);
@@ -1470,20 +1541,21 @@ document.addEventListener('input', (e) => {
     const map = t.dataset.close === 'final' ? d.finals : d.ventas;
     if (t.value.trim() === '') delete map[t.dataset.id];
     else map[t.dataset.id] = parseNum(t.value);
-    save();
+    save(false);
     return refreshClosingNumbers();
   }
   if (t.id === 'closeTransfer' || t.id === 'closeCounted') {
     draft()[t.id === 'closeTransfer' ? 'transfer' : 'cashCounted'] = t.value;
-    save();
+    save(false);
     return refreshClosingNumbers();
   }
   if (t.id === 'closeNote') {
     draft().note = t.value;
-    return save();
+    return save(false);
   }
   if (t.id === 'bizName') {
     state.settings.businessName = t.value;
+    state.settings.updatedAt = Date.now();
     save();
     $('#brandName').textContent = t.value || 'Mi negocio';
     document.title = t.value || 'Mi negocio';
@@ -1495,7 +1567,7 @@ document.addEventListener('change', (e) => {
   if (t.dataset.quick) return saveQuickField(t);
   if (t.id === 'closeDate') {
     draft().date = t.value;
-    return save();
+    return save(false);
   }
   if (t.id === 'restoreFile' && t.files[0]) {
     restoreBackup(t.files[0]);
@@ -1516,6 +1588,10 @@ document.addEventListener('submit', (e) => {
   if (e.target.id === 'businessForm') {
     e.preventDefault();
     submitBusinessForm(e.target);
+  }
+  if (e.target.id === 'loginForm') {
+    e.preventDefault();
+    submitLoginForm(e.target, e.submitter || $('#loginForm button[value="login"]'));
   }
 });
 
@@ -1550,5 +1626,6 @@ if (navigator.serviceWorker && location.protocol !== 'file:') {
 
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
-save();
+Cloud.init();
+save(false);
 render();
