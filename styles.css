@@ -44,7 +44,9 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; touch-action: manipulation; }
+/* No double-tap zoom: tapping a product quickly several times must add it several times. */
+button, a, input, select, textarea, label, .tile, [data-action] { touch-action: manipulation; }
 body {
   margin: 0;
   background: var(--bg);
@@ -342,3 +344,12 @@ textarea { min-height: 70px; resize: vertical; }
 
 .tile.sold-out { opacity: .55; box-shadow: none; }
 .tile.sold-out.in-cart { opacity: 1; }
+
+/* Safari gives date fields a fixed minimum width that overflows narrow cards. */
+input[type="date"] {
+  -webkit-appearance: none; appearance: none;
+  display: block; min-width: 0; max-width: 100%;
+  text-align: left; line-height: 24px;
+}
+input[type="date"]::-webkit-date-and-time-value { text-align: left; }
+.field { min-width: 0; }

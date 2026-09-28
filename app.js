@@ -622,9 +622,9 @@ function renderCartBar() {
   bar.hidden = false;
   bar.innerHTML = `
     <div class="cartbar-inner">
-      <div class="grow" data-action="openCart">${qty(n)} ${n === 1 ? 'artículo' : 'artículos'} · <u>ver</u><b>${money(cartTotal())}</b></div>
+      <div class="grow" data-action="openCart">${qty(n)} ${n === 1 ? 'artículo' : 'artículos'}<b>${money(cartTotal())}</b></div>
       <button class="btn sm" style="background:transparent;color:inherit;border-color:rgba(127,127,127,.5);min-height:44px" data-action="cancelCart">Cancelar</button>
-      <button class="btn primary" data-action="registerSale">Cobrar</button>
+      <button class="btn primary" data-action="openCart">Ver venta</button>
     </div>`;
 }
 
@@ -676,9 +676,10 @@ function cartSheetHtml() {
     <h2>Venta actual</h2>
     ${lines}
     <div class="sum-line" style="margin-top:8px"><span>Total</span><span class="sum-total">${money(cartTotal())}</span></div>
+    <button class="btn primary block" style="margin-top:12px;min-height:54px;font-size:17px" data-action="registerSale">Cobrar ${money(cartTotal())}</button>
     <div class="btn-row" style="margin-top:10px">
-      <button class="btn danger" data-action="clearCart">Vaciar</button>
-      <button class="btn primary" data-action="registerSale">Cobrar ${money(cartTotal())}</button>
+      <button class="btn" data-action="closeSheet">Seguir agregando</button>
+      <button class="btn danger" data-action="cancelCart">Cancelar venta</button>
     </div>`;
 }
 
@@ -1497,7 +1498,7 @@ function viewAjustes() {
     <h3 class="section-title">Cómo funciona</h3>
     <div class="card small stack">
       <div><b>1. Al empezar:</b> en Inventario → “Edición rápida” pon el precio y lo que hay de cada producto.</div>
-      <div><b>2. Durante el día (opcional):</b> en Vender toca los productos y “Cobrar”. Si no quieres registrar cada venta, no pasa nada: el cierre lo calcula igual.</div>
+      <div><b>2. Durante el día (opcional):</b> en Vender toca los productos, luego “Ver venta” y “Cobrar”. Si no quieres registrar cada venta, no pasa nada: el cierre lo calcula igual.</div>
       <div><b>3. Si llega mercancía:</b> en Inventario abre el producto y usa “Entrada de mercancía”.</div>
       <div><b>4. Por la noche:</b> en Cierre escribe lo que queda de cada producto y lo que entró por transferencia. Toca “Cerrar el día”.</div>
     </div>
@@ -1507,7 +1508,7 @@ function viewAjustes() {
       <button class="btn danger block" data-action="resetAll">Borrar los datos de “${esc(state.settings.businessName)}”</button>
       ${others.length ? `<button class="btn danger block" data-action="deleteBusiness" data-id="${index.activeId}">Eliminar este negocio</button>` : ''}
     </div>
-    <div class="muted small" style="text-align:center;margin-top:18px">Peter Mipyme · versión 1.4</div>
+    <div class="muted small" style="text-align:center;margin-top:18px">Peter Mipyme · versión 1.5</div>
   `;
 }
 
