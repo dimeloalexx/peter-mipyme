@@ -1,5 +1,5 @@
 // Offline cache. Bump CACHE_VERSION on every release so phones pick up the new files.
-const CACHE_VERSION = 'pm-v6';
+const CACHE_VERSION = 'pm-v7';
 const APP_FILES = [
   './',
   './index.html',

@@ -802,6 +802,9 @@ function productFormHtml(p) {
   const stock = isNew ? 0 : stockOf(p);
   const cats = categoryList();
   if (p.category && !cats.includes(p.category)) cats.push(p.category);
+  // With no categories yet (a business that starts empty) "new category" is the only
+  // option, already selected, so no change event would ever reveal its field.
+  const newCat = !cats.length;
   return `
     <h2>${isNew ? 'Nuevo producto' : 'Editar producto'}</h2>
     <form id="productForm" class="stack" data-id="${isNew ? '' : p.id}">
@@ -809,10 +812,11 @@ function productFormHtml(p) {
       <label class="field"><span>Categoría</span>
         <select name="category">
           ${cats.map((c) => `<option ${c === p.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}
-          <option value="__new">+ Nueva categoría…</option>
+          <option value="__new" ${newCat ? 'selected' : ''}>+ Nueva categoría…</option>
         </select>
       </label>
-      <label class="field" id="newCatField" hidden><span>Nombre de la nueva categoría</span><input name="newCategory" autocomplete="off"></label>
+      <label class="field" id="newCatField" ${newCat ? '' : 'hidden'}><span>Nombre de la nueva categoría</span>
+        <input name="newCategory" autocomplete="off" placeholder="Ej: Bebidas, Dulces…"></label>
       <div class="row">
         <label class="field grow"><span>Precio (CUP)</span><input name="price" inputmode="decimal" value="${p.price || ''}" placeholder="0"></label>
         <label class="field" style="width:110px"><span>Unidad</span><input name="unit" value="${esc(p.unit)}" autocomplete="off"></label>
@@ -848,7 +852,12 @@ function submitProductForm(form) {
   let category = String(data.get('category') || '');
   if (category === '__new') {
     category = String(data.get('newCategory') || '').trim();
-    if (!category) return toast('Escribe el nombre de la categoría');
+    if (!category) {
+      const field = $('#newCatField');
+      field.hidden = false;
+      $('input', field).focus();
+      return toast('Escribe el nombre de la categoría');
+    }
   }
   if (!state.categories.includes(category)) state.categories.push(category);
 
@@ -1508,7 +1517,7 @@ function viewAjustes() {
       <button class="btn danger block" data-action="resetAll">Borrar los datos de “${esc(state.settings.businessName)}”</button>
       ${others.length ? `<button class="btn danger block" data-action="deleteBusiness" data-id="${index.activeId}">Eliminar este negocio</button>` : ''}
     </div>
-    <div class="muted small" style="text-align:center;margin-top:18px">Peter Mipyme · versión 1.5</div>
+    <div class="muted small" style="text-align:center;margin-top:18px">Peter Mipyme · versión 1.6</div>
   `;
 }
 
